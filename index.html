@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>志工營隊即時語音導覽 (實戰穩定版)</title>
+    <title>志工營隊即時語音導覽 (流暢打字機版)</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <style>
@@ -22,7 +22,9 @@
         .card { flex: 1; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); display: flex; flex-direction: column; overflow: hidden; }
         .card-header { background-color: #e9ecef; padding: 10px; text-align: center; font-size: 1.1rem; font-weight: bold; border-bottom: 1px solid #dee2e6; }
         .transcript-box { flex: 1; padding: 15px; overflow-y: auto; font-size: 1.1rem; line-height: 1.5; min-height: 120px; }
-        .message { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed #eee; }
+        .message { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed #eee; transition: color 0.3s; }
+        .interim { color: #aaa; } /* 還沒講完的字用灰色顯示 */
+        .final { color: #333; }   /* 講完確定後的字用深色顯示 */
         .hidden { display: none; }
     </style>
 </head>
@@ -68,11 +70,10 @@
         let lastCountEn = 0; let lastCountEs = 0;
         let playAudioEn = false; let playAudioEs = false;
 
-        // --- 志工聽眾功能 ---
+        // 志工聽眾功能 (維持不變)
         function startAsListener() {
             document.getElementById('role-selection').className = 'hidden';
             document.getElementById('listener-controls').className = '';
-            
             const unlockUtterance = new SpeechSynthesisUtterance('');
             window.speechSynthesis.speak(unlockUtterance);
 
@@ -83,7 +84,6 @@
                     const currentCountEn = (data.en || []).length;
                     if (currentCountEn > lastCountEn && playAudioEn) { speakText(data.en[currentCountEn - 1], 'en-US'); }
                     lastCountEn = currentCountEn;
-
                     const currentCountEs = (data.es || []).length;
                     if (currentCountEs > lastCountEs && playAudioEs) { speakText(data.es[currentCountEs - 1], 'es-ES'); }
                     lastCountEs = currentCountEs;
@@ -96,30 +96,21 @@
 
         function toggleAudio(lang) {
             const btn = document.getElementById(`toggle-${lang}`);
-            if (lang === 'en') {
-                playAudioEn = !playAudioEn;
-                btn.className = playAudioEn ? 'btn btn-audio active' : 'btn btn-audio';
-                btn.innerText = playAudioEn ? '🔊 英文語音 (開)' : '🔈 英文語音 (關)';
-            } else if (lang === 'es') {
-                playAudioEs = !playAudioEs;
-                btn.className = playAudioEs ? 'btn btn-audio active' : 'btn btn-audio';
-                btn.innerText = playAudioEs ? '🔊 西文語音 (開)' : '🔈 西文語音 (關)';
-            }
+            if (lang === 'en') { playAudioEn = !playAudioEn; btn.className = playAudioEn ? 'btn btn-audio active' : 'btn btn-audio'; btn.innerText = playAudioEn ? '🔊 英文語音 (開)' : '🔈 英文語音 (關)'; } 
+            else if (lang === 'es') { playAudioEs = !playAudioEs; btn.className = playAudioEs ? 'btn btn-audio active' : 'btn btn-audio'; btn.innerText = playAudioEs ? '🔊 西文語音 (開)' : '🔈 西文語音 (關)'; }
         }
 
         function speakText(text, langCode) {
-            if (text.includes("翻譯延遲") || text.includes("連線錯誤")) return;
+            if (text.includes("翻譯額度可能已滿") || text.includes("連線錯誤")) return;
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.lang = langCode; utterance.rate = 0.9;
             window.speechSynthesis.speak(utterance);
         }
 
-        // --- 導覽員功能 ---
+        // 導覽員功能
         function startAsSpeaker() {
             document.getElementById('role-selection').className = 'hidden';
             document.getElementById('speaker-controls').className = '';
-            
-            // 【重要修改】導覽員停止監聽雲端，改為直接在本機顯示，確保畫面絕對順暢！
             dbRef.off(); 
 
             const btnStart = document.getElementById('btn-start');
@@ -133,12 +124,17 @@
             const recognition = new SpeechRecognition();
             recognition.lang = 'zh-TW';
             recognition.continuous = true;
-            recognition.interimResults = false;
+            
+            // 【關鍵修改】開啟即時辨識，畫面反應會變超級快！
+            recognition.interimResults = true; 
+
+            // 用來暫存「還沒講完」的畫面區塊
+            let currentInterimDiv = null;
 
             btnStart.addEventListener('click', () => {
                 recognition.start(); isRecognizing = true;
                 btnStart.disabled = true; btnStop.disabled = false;
-                statusText.innerText = "🎙️ 正在收音並廣播中...";
+                statusText.innerText = "🎙️ 收音中，請像新聞主播一樣清晰發音...";
             });
 
             btnStop.addEventListener('click', () => {
@@ -153,33 +149,66 @@
             });
 
             recognition.onresult = async (event) => {
-                const transcript = event.results[event.resultIndex][0].transcript;
-                
-                // 1. 立刻在導覽員畫面印出中文與等待動畫，不用等雲端！
-                appendSingleMessage(boxZh, transcript);
-                const enLoading = appendSingleMessage(boxEn, "⏳ 翻譯中...");
-                const esLoading = appendSingleMessage(boxEs, "⏳ 翻譯中...");
+                let interimTranscript = '';
+                let finalTranscript = '';
 
-                // 2. 進行翻譯
-                const enText = await translateText(transcript, 'zh-TW', 'en');
-                const esText = await translateText(transcript, 'zh-TW', 'es');
+                // 分辨哪些是「還在講的」，哪些是「已經確定講完的」
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
 
-                // 3. 翻譯完成，更新畫面
-                enLoading.innerText = enText;
-                esLoading.innerText = esText;
+                // 處理即時畫面 (灰色字)
+                if (interimTranscript !== '') {
+                    if (!currentInterimDiv) {
+                        currentInterimDiv = document.createElement('div');
+                        currentInterimDiv.className = 'message interim';
+                        boxZh.appendChild(currentInterimDiv);
+                    }
+                    currentInterimDiv.innerText = interimTranscript;
+                    boxZh.scrollTop = boxZh.scrollHeight;
+                }
 
-                // 4. 背景傳送到雲端給志工聽眾
-                dbRef.once('value', (snapshot) => {
-                    const data = snapshot.val() || { zh: [], en: [], es: [] };
-                    if (!data.zh) data.zh = []; if (!data.en) data.en = []; if (!data.es) data.es = [];
-                    data.zh.push(transcript); data.en.push(enText); data.es.push(esText);
-                    dbRef.set(data);
-                });
+                // 處理最終確認的句子 (黑色字) -> 觸發翻譯！
+                if (finalTranscript !== '') {
+                    if (currentInterimDiv) {
+                        currentInterimDiv.className = 'message final';
+                        currentInterimDiv.innerText = finalTranscript;
+                        currentInterimDiv = null;
+                    } else {
+                        const div = document.createElement('div');
+                        div.className = 'message final';
+                        div.innerText = finalTranscript;
+                        boxZh.appendChild(div);
+                    }
+                    boxZh.scrollTop = boxZh.scrollHeight;
+
+                    // 句子確定了，開始翻譯
+                    const enLoading = appendSingleMessage(boxEn, "⏳ 翻譯中...");
+                    const esLoading = appendSingleMessage(boxEs, "⏳ 翻譯中...");
+
+                    const enText = await translateText(finalTranscript, 'zh-TW', 'en');
+                    const esText = await translateText(finalTranscript, 'zh-TW', 'es');
+
+                    enLoading.innerText = enText;
+                    esLoading.innerText = esText;
+
+                    // 傳送到雲端
+                    dbRef.once('value', (snapshot) => {
+                        const data = snapshot.val() || { zh: [], en: [], es: [] };
+                        if (!data.zh) data.zh = []; if (!data.en) data.en = []; if (!data.es) data.es = [];
+                        data.zh.push(finalTranscript); data.en.push(enText); data.es.push(esText);
+                        dbRef.set(data);
+                    });
+                }
             };
+
             recognition.onend = () => { if (isRecognizing) recognition.start(); };
         }
 
-        // 輔助函數：印出單筆訊息
         function appendSingleMessage(boxElement, text) {
             const div = document.createElement('div');
             div.className = 'message';
