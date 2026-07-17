@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>志工營隊即時語音導覽 (同步口譯版)</title>
+    <title>志工營隊即時語音導覽 (實戰穩定版)</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f8; color: #333; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
         header { text-align: center; margin-bottom: 20px; }
-        
         .btn { font-size: 1.2rem; padding: 12px 30px; margin: 8px; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: 0.2s; }
         .btn-start { background-color: #28a745; color: white; }
         .btn-stop { background-color: #dc3545; color: white; }
@@ -17,7 +16,6 @@
         .btn-listener { background-color: #007bff; color: white; }
         .btn-audio { background-color: #e9ecef; color: #333; border: 2px solid #ccc; }
         .btn-audio.active { background-color: #ffc107; border-color: #d39e00; }
-        
         #status { margin-top: 10px; font-size: 1.1rem; color: #666; font-weight: bold; }
         .columns-container { display: flex; gap: 15px; flex: 1; overflow: hidden; flex-direction: column; }
         @media (min-width: 768px) { .columns-container { flex-direction: row; } }
@@ -31,13 +29,11 @@
 <body>
 
     <header>
-        <!-- 初始身分選擇 -->
         <div id="role-selection">
             <button onclick="startAsSpeaker()" class="btn btn-start">🎙️ 我是導覽員 (說話)</button>
             <button onclick="startAsListener()" class="btn btn-listener">🎧 我是志工聽眾 (收聽)</button>
         </div>
         
-        <!-- 導覽員的控制面板 -->
         <div id="speaker-controls" class="hidden">
             <button id="btn-start" class="btn btn-start">▶ 開始導覽</button>
             <button id="btn-stop" class="btn btn-stop" disabled>■ 停止</button>
@@ -45,7 +41,6 @@
             <div id="status">身分：導覽員。準備就緒...</div>
         </div>
 
-        <!-- 志工的控制面板 (耳機語音開關) -->
         <div id="listener-controls" class="hidden">
             <p style="margin-bottom: 5px; font-weight: bold;">選擇同步口譯語音：</p>
             <button id="toggle-en" class="btn btn-audio" onclick="toggleAudio('en')">🔈 英文語音 (關)</button>
@@ -70,48 +65,28 @@
         const boxEs = document.getElementById('box-es');
         
         let isRecognizing = false;
-        
-        // 記錄陣列長度，用來判斷是不是有「新」句子加進來
-        let lastCountEn = 0;
-        let lastCountEs = 0;
-
-        // 語音播放狀態
-        let playAudioEn = false;
-        let playAudioEs = false;
+        let lastCountEn = 0; let lastCountEs = 0;
+        let playAudioEn = false; let playAudioEs = false;
 
         // --- 志工聽眾功能 ---
         function startAsListener() {
             document.getElementById('role-selection').className = 'hidden';
             document.getElementById('listener-controls').className = '';
             
-            // 為了突破手機的聲音限制，先播放一段極短的無聲音頻來解鎖權限
             const unlockUtterance = new SpeechSynthesisUtterance('');
             window.speechSynthesis.speak(unlockUtterance);
 
-            // 開始監聽雲端資料庫
             dbRef.on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data) {
-                    updateBox(boxZh, data.zh || []);
-                    updateBox(boxEn, data.en || []);
-                    updateBox(boxEs, data.es || []);
-
-                    // 檢查有沒有新的英文句子
+                    updateBox(boxZh, data.zh || []); updateBox(boxEn, data.en || []); updateBox(boxEs, data.es || []);
                     const currentCountEn = (data.en || []).length;
-                    if (currentCountEn > lastCountEn && playAudioEn) {
-                        const newText = data.en[currentCountEn - 1];
-                        speakText(newText, 'en-US');
-                    }
+                    if (currentCountEn > lastCountEn && playAudioEn) { speakText(data.en[currentCountEn - 1], 'en-US'); }
                     lastCountEn = currentCountEn;
 
-                    // 檢查有沒有新的西文句子
                     const currentCountEs = (data.es || []).length;
-                    if (currentCountEs > lastCountEs && playAudioEs) {
-                        const newText = data.es[currentCountEs - 1];
-                        speakText(newText, 'es-ES');
-                    }
+                    if (currentCountEs > lastCountEs && playAudioEs) { speakText(data.es[currentCountEs - 1], 'es-ES'); }
                     lastCountEs = currentCountEs;
-
                 } else {
                     boxZh.innerHTML = ""; boxEn.innerHTML = ""; boxEs.innerHTML = "";
                     lastCountEn = 0; lastCountEs = 0;
@@ -119,7 +94,6 @@
             });
         }
 
-        // 開關語言語音按鈕的邏輯
         function toggleAudio(lang) {
             const btn = document.getElementById(`toggle-${lang}`);
             if (lang === 'en') {
@@ -133,22 +107,21 @@
             }
         }
 
-        // 呼叫手機內建的發音機器人
         function speakText(text, langCode) {
-            // 如果是錯誤訊息就不唸出來
             if (text.includes("翻譯延遲") || text.includes("連線錯誤")) return;
-            
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = langCode; // 指定發音的語言口音
-            utterance.rate = 0.9; // 稍微放慢講話速度，讓志工聽得更清楚
+            utterance.lang = langCode; utterance.rate = 0.9;
             window.speechSynthesis.speak(utterance);
         }
 
-        // --- 導覽員功能 (同前一個版本) ---
+        // --- 導覽員功能 ---
         function startAsSpeaker() {
             document.getElementById('role-selection').className = 'hidden';
             document.getElementById('speaker-controls').className = '';
             
+            // 【重要修改】導覽員停止監聽雲端，改為直接在本機顯示，確保畫面絕對順暢！
+            dbRef.off(); 
+
             const btnStart = document.getElementById('btn-start');
             const btnStop = document.getElementById('btn-stop');
             const btnClear = document.getElementById('btn-clear');
@@ -165,7 +138,7 @@
             btnStart.addEventListener('click', () => {
                 recognition.start(); isRecognizing = true;
                 btnStart.disabled = true; btnStop.disabled = false;
-                statusText.innerText = "🎙️ 正在廣播文字與語音...";
+                statusText.innerText = "🎙️ 正在收音並廣播中...";
             });
 
             btnStop.addEventListener('click', () => {
@@ -174,13 +147,28 @@
                 statusText.innerText = "⏹️ 暫停廣播。";
             });
 
-            btnClear.addEventListener('click', () => { dbRef.set(null); });
+            btnClear.addEventListener('click', () => { 
+                dbRef.set(null); 
+                boxZh.innerHTML = ""; boxEn.innerHTML = ""; boxEs.innerHTML = "";
+            });
 
             recognition.onresult = async (event) => {
                 const transcript = event.results[event.resultIndex][0].transcript;
+                
+                // 1. 立刻在導覽員畫面印出中文與等待動畫，不用等雲端！
+                appendSingleMessage(boxZh, transcript);
+                const enLoading = appendSingleMessage(boxEn, "⏳ 翻譯中...");
+                const esLoading = appendSingleMessage(boxEs, "⏳ 翻譯中...");
+
+                // 2. 進行翻譯
                 const enText = await translateText(transcript, 'zh-TW', 'en');
                 const esText = await translateText(transcript, 'zh-TW', 'es');
 
+                // 3. 翻譯完成，更新畫面
+                enLoading.innerText = enText;
+                esLoading.innerText = esText;
+
+                // 4. 背景傳送到雲端給志工聽眾
                 dbRef.once('value', (snapshot) => {
                     const data = snapshot.val() || { zh: [], en: [], es: [] };
                     if (!data.zh) data.zh = []; if (!data.en) data.en = []; if (!data.es) data.es = [];
@@ -191,15 +179,19 @@
             recognition.onend = () => { if (isRecognizing) recognition.start(); };
         }
 
+        // 輔助函數：印出單筆訊息
+        function appendSingleMessage(boxElement, text) {
+            const div = document.createElement('div');
+            div.className = 'message';
+            div.innerText = text;
+            boxElement.appendChild(div);
+            boxElement.scrollTop = boxElement.scrollHeight;
+            return div;
+        }
+
         function updateBox(boxElement, textArray) {
             boxElement.innerHTML = "";
-            textArray.forEach(text => {
-                const div = document.createElement('div');
-                div.className = 'message';
-                div.innerText = text;
-                boxElement.appendChild(div);
-            });
-            boxElement.scrollTop = boxElement.scrollHeight;
+            textArray.forEach(text => { appendSingleMessage(boxElement, text); });
         }
 
         async function translateText(text, fromLang, toLang) {
@@ -207,7 +199,7 @@
                 const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${fromLang}|${toLang}`;
                 const response = await fetch(url);
                 const data = await response.json();
-                return data.responseStatus === 200 ? data.responseData.translatedText : "(翻譯延遲)";
+                return data.responseStatus === 200 ? data.responseData.translatedText : "(翻譯額度可能已滿)";
             } catch (error) { return "(連線錯誤)"; }
         }
     </script>
